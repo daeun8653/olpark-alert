@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>올림픽공원 공연 겹침 운영 대시보드</title>
+<style>
+  body { font-family: sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; line-height: 1.6; color: #222; }
+  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 28px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .card { background: #f5f5f3; border-radius: 8px; padding: 12px; }
+  .card .label { font-size: 13px; color: #666; } .card .value { font-size: 24px; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { border-bottom: 1px solid #eee; padding: 8px 6px; text-align: left; vertical-align: top; }
+  th { background: #fafafa; }
+  .bar { height: 10px; background: #d33; border-radius: 4px; }
+  .high { color: #b42020; font-weight: bold; } .mid { color: #a36b00; font-weight: bold; }
+  .muted { color: #666; font-size: 13px; }
+  select { padding: 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>올림픽공원 공연 겹침 운영 대시보드</h1>
+<p class="muted">대형 공연과 강좌 시간이 겹치는 날을 미리 보고, 주차 안내 인력 배치나 수강생 공지에 활용할 수 있어요. 매일 저녁 자동 갱신돼요.</p>
+
+<label>기간: <select id="range">
+  <option value="14">앞으로 2주</option>
+  <option value="30" selected>앞으로 30일</option>
+  <option value="60">앞으로 60일</option>
+  <option value="120">앞으로 120일</option>
+</select></label>
+
+<h2>요약</h2>
+<div class="cards" id="summary"></div>
+
+<h2>날짜별 겹침 현황</h2>
+<table>
+  <thead><tr><th>날짜</th><th>공연 (공연장)</th><th>혼잡</th><th>겹치는 강좌</th><th>영향 수강생 최대</th><th></th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<p class="muted">영향 수강생 최대 = 겹치는 강좌들의 정원 합계예요(실제 수강 인원은 정원보다 적을 수 있어요).</p>
+<p class="muted"><a href="./">← 수강생 화면으로</a></p>
+
+<script>
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+let alerts = [];
+
+function render() {
+  const days = Number(document.getElementById("range").value);
+  const today = new Date();
+  const start = today.toISOString().slice(0, 10);
+  const end = new Date(today.getTime() + days * 86400000).toISOString().slice(0, 10);
+  const inRange = alerts.filter(a => a.date >= start && a.date <= end);
+
+  const byDate = {};
+  inRange.forEach(a => {
+    const d = byDate[a.date] ||= { date: a.date, weekday: a.weekday, shows: {}, courses: {}, level: "보통" };
+    d.shows[a.show] = a.place;
+    d.courses[a.course] = Number(a.capacity) || 0;
+    if (a.level === "높음") d.level = "높음";
+  });
+  const rows = Object.values(byDate).sort((x, y) => x.date.localeCompare(y.date));
+  rows.forEach(r => { r.capacity = Object.values(r.courses).reduce((s, v) => s + v, 0); });
+
+  const allCourses = new Set(inRange.map(a => a.course));
+  const maxCap = Math.max(0, ...rows.map(r => r.capacity));
+  const peak = rows.find(r => r.capacity === maxCap);
+  const highDays = rows.filter(r => r.level === "높음").length;
+
+  document.getElementById("summary").innerHTML = `
+    <div class="card"><div class="label">겹침이 있는 날</div><div class="value">${rows.length}일</div></div>
+    <div class="card"><div class="label">혼잡 '높음' 날</div><div class="value">${highDays}일</div></div>
+    <div class="card"><div class="label">영향받는 강좌</div><div class="value">${allCourses.size}개</div></div>
+    <div class="card"><div class="label">하루 최대 영향 수강생</div><div class="value">${maxCap}명</div>
+      <div class="label">${peak ? esc(peak.date) + "(" + esc(peak.weekday) + ")" : "-"}</div></div>`;
+
+  document.getElementById("rows").innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.date)}(${esc(r.weekday)})</td>
+      <td>${Object.entries(r.shows).map(([s, p]) => `${esc(s)}<br><span class="muted">${esc(p)}</span>`).join("<br>")}</td>
+      <td class="${r.level === "높음" ? "high" : "mid"}">${esc(r.level)}</td>
+      <td>${Object.keys(r.courses).length}개</td>
+      <td>${r.capacity}명</td>
+      <td style="width:120px"><div class="bar" style="width:${maxCap ? Math.round(r.capacity / maxCap * 100) : 0}%"></div></td>
+    </tr>`).join("") || `<tr><td colspan="6" class="muted">이 기간에는 겹치는 공연이 없어요.</td></tr>`;
+}
+
+document.getElementById("range").addEventListener("change", render);
+fetch("./alerts.json").then(r => r.json()).then(data => { alerts = data; render(); });
+</script>
+</body>
+</html>

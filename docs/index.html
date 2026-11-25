@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>올림픽공원 수강생 공연 알림</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; line-height: 1.6; color: #222; }
+  h1 { font-size: 22px; margin-bottom: 4px; } h2 { font-size: 18px; margin-top: 28px; }
+  input[type=text] { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+  #list { max-height: 280px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; margin: 8px 0; padding: 4px 8px; }
+  #list label { display: block; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+  .timing { margin: 12px 0; } .timing label { margin-right: 16px; }
+  button { width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background: #fff; cursor: pointer; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .high { border-left: 4px solid #d33; } .mid { border-left: 4px solid #e9a400; }
+  .muted { color: #666; font-size: 14px; }
+  .ratio { display: inline-block; background: #fdecec; color: #a32020; border-radius: 6px; padding: 0 6px; font-size: 13px; }
+  a { color: #1a5fb4; }
+</style>
+</head>
+<body>
+<h1>올림픽공원 수강생 공연 알림</h1>
+<p class="muted">내 강좌 시간에 올림픽공원 대형 공연이 겹치면, 주차 혼잡과 대중교통 정보를 미리 알려드려요.</p>
+
+<input type="text" id="q" placeholder="강좌 검색 (예: 19시, 초급, 자유수영)">
+<div id="list"></div>
+
+<div class="timing">
+  <b>알림 받을 시간</b><br>
+  <label><input type="radio" name="timing" value="evening" checked> 전날 저녁 6시</label>
+  <label><input type="radio" name="timing" value="morning"> 당일 아침 8시</label>
+</div>
+
+<button id="subscribe">선택한 강좌로 알림 받기</button>
+<p id="status" class="muted"></p>
+
+<h2>내 강좌와 겹치는 공연</h2>
+<div id="preview" class="muted">강좌를 선택하면 여기에 보여요.</div>
+
+<p class="muted" style="margin-top:32px">기관 담당자용 화면: <a href="./admin.html">운영 대시보드 보기</a></p>
+<p class="muted">공연 정보: 공연예술통합전산망(KOPIS) · 강좌·주차 정보: 한국체육산업개발(주) 공공데이터</p>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC8gODQTFOA2aXHwbub7CQY9IALk4q5KJQ",
+  authDomain: "olpark-alert.firebaseapp.com",
+  projectId: "olpark-alert",
+  storageBucket: "olpark-alert.firebasestorage.app",
+  messagingSenderId: "238172182457",
+  appId: "1:238172182457:web:e1b6a3eee421d154248868"
+};
+const VAPID_KEY = "BFGN6bRcWSYKspKLVj_5maxRrNT2TMG_QCPvQqTIw-BaUgoHxQreEG23PtwIAw08ETjs0_de6IhCovpPv9L_hFY";
+
+const app = initializeApp(firebaseConfig);
+const messaging = getMessaging(app);
+const db = getFirestore(app);
+
+const selected = new Set();
+let courses = [];
+let alerts = [];
+const statusEl = document.getElementById("status");
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function renderList() {
+  const q = document.getElementById("q").value.trim();
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  courses
+    .filter(c => !q || c.name.includes(q) || c.time.includes(q))
+    .forEach(c => {
+      const label = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = selected.has(c.name);
+      box.addEventListener("change", () => {
+        box.checked ? selected.add(c.name) : selected.delete(c.name);
+        renderPreview();
+      });
+      label.append(box, ` ${c.name} (${c.days} ${c.time})`);
+      list.append(label);
+    });
+}
+
+function renderPreview() {
+  const el = document.getElementById("preview");
+  const today = new Date().toISOString().slice(0, 10);
+  const mine = alerts.filter(a => selected.has(a.course) && a.date >= today);
+  if (!selected.size) { el.textContent = "강좌를 선택하면 여기에 보여요."; return; }
+  if (!mine.length) { el.textContent = "선택한 강좌와 겹치는 대형 공연이 없어요."; return; }
+  el.innerHTML = mine.slice(0, 20).map(a => `
+    <div class="card ${a.level === "높음" ? "high" : "mid"}">
+      <b>${esc(a.date)}(${esc(a.weekday)}) · 혼잡 ${esc(a.level)}</b>
+      ${a.ratio ? `<span class="ratio">평소의 약 ${esc(a.ratio)}배</span>` : ""}<br>
+      ${esc(a.course_time)} ${esc(a.course)}<br>
+      <span class="muted">${esc(a.show_start)} ${esc(a.show)} · ${esc(a.place)}<br>
+      혼잡 예상 ${esc(a.busy_window)} · ${esc(a.transit)}</span>
+    </div>`).join("");
+}
+
+document.getElementById("q").addEventListener("input", renderList);
+
+document.getElementById("subscribe").addEventListener("click", async () => {
+  if (!selected.size) { statusEl.textContent = "강좌를 먼저 선택해 주세요."; return; }
+  const timing = document.querySelector('input[name="timing"]:checked').value;
+  try {
+    statusEl.textContent = "알림 권한을 요청하고 있어요…";
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") { statusEl.textContent = "알림이 허용되지 않았어요. 브라우저 설정에서 허용해 주세요."; return; }
+    const reg = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    await addDoc(collection(db, "subscribers"), {
+      token, courses: [...selected], timing, createdAt: serverTimestamp()
+    });
+    const when = timing === "evening" ? "공연 전날 저녁 6시" : "공연 당일 아침 8시";
+    statusEl.textContent = `알림 신청 완료! 강좌 ${selected.size}개에 대해 ${when}에 알려드려요.`;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "오류가 났어요: " + e.message;
+  }
+});
+
+onMessage(messaging, payload => {
+  const d = payload.data || {};
+  new Notification(d.title || "올림픽공원 공연 알림", { body: d.body || "" });
+});
+
+const [c, a] = await Promise.all([
+  fetch("./courses.json").then(r => r.json()),
+  fetch("./alerts.json").then(r => r.json())
+]);
+courses = c; alerts = a;
+renderList();
+</script>
+</body>
+</html>
