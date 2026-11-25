@@ -114,6 +114,7 @@ document.getElementById("subscribe").addEventListener("click", async () => {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") { statusEl.textContent = "알림이 허용되지 않았어요. 브라우저 설정에서 허용해 주세요."; return; }
     const reg = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
+    await navigator.serviceWorker.ready;
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
     await addDoc(collection(db, "subscribers"), {
       token, courses: [...selected], timing, createdAt: serverTimestamp()
