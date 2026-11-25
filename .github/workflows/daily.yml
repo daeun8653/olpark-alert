@@ -3,7 +3,11 @@ name: daily-alert
 on:
   schedule:
     - cron: "7 9 * * *"
+    - cron: "7 23 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run:
@@ -14,7 +18,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python pipeline.py daily
+      - name: Run pipeline
         env:
           KOPIS_KEY: ${{ secrets.KOPIS_KEY }}
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+        run: |
+          MODE=evening
+          if [ "${{ github.event.schedule }}" = "7 23 * * *" ]; then MODE=morning; fi
+          python pipeline.py $MODE
+      - name: Commit updated web data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add docs/alerts.json docs/courses.json
+          git diff --cached --quiet || git commit -m "Update alerts data"
+          git push
